@@ -1,0 +1,85 @@
+module Main where
+
+import Daml.Script
+
+-- Animal interface definition
+interface Animal where
+  -- Interface methods
+  operator : Party
+  sound : Text
+
+  -- Interface must define a view type.
+  viewtype AnimalInterfaceViewType
+
+  -- Define a choice on the interface
+  nonconsuming choice MakeSound : Text
+    controller operator this
+    do
+      pure $ sound this
+
+-- Template definition of a Cat, which implements the Animal interface
+template Cat
+  with
+    catOperator : Party
+  where
+    signatory catOperator
+    
+    -- `How the Animal interface is implemented by the Cat template
+    interface instance Animal for Cat where
+      -- All interface instances must implement a special view method which returns a value
+      -- of the type declared by viewtype
+      view = AnimalInterfaceViewType "cat"
+      -- The implementations of the Interface methods
+      operator = catOperator
+      sound = "Miaow! I am a cat belonging to " <> show catOperator
+
+-- Template definition of a Dog, which implements the Animal interface
+template Dog
+  with
+    dogOperator : Party
+  where
+    signatory dogOperator
+    
+    interface instance Animal for Dog where
+      view = AnimalInterfaceViewType "dog"
+      operator = dogOperator
+      sound = "Woof! I am a dog belonging to " <> show dogOperator
+
+-- Definition of the view type
+data AnimalInterfaceViewType =
+  AnimalInterfaceViewType { name : Text}
+
+-- Testing script
+setup : Script ()
+setup = script do
+-- Party setup
+  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+
+  -- Create a cat contract
+  catId <- submit alice do
+    createCmd Cat with catOperator = alice
+  
+  -- Create a dog contract
+  dogId <- submit alice do
+    createCmd Dog with dogOperator = alice
+
+  -- Get the Animal interface contract Ids for each
+  let animal1Id = toInterfaceContractId @Animal catId
+  let animal2Id = toInterfaceContractId @Animal dogId
+
+  -- Get them to make their sounds (using the interface)
+  sound1 <- submit alice do
+    exerciseCmd animal1Id MakeSound
+
+  sound2 <- submit alice do
+    exerciseCmd animal2Id MakeSound
+
+  debug sound1
+  debug sound2
+
+  -- Go back to a Cat contract Id and verify it matches the original one
+  let cat2Id = fromInterfaceContractId @Cat animal1Id
+
+  assert $ catId == cat2Id
+
+  pure ()
