@@ -98,7 +98,11 @@ setup = script do
   -- Get the Animal interface contract Ids for each
   let animal1Id = toInterfaceContractId @IAnimal catId
   let animal2Id = toInterfaceContractId @IAnimal dogId
+
+  -- Although the types are different the ids are the same
+  debug catId
   debug animal1Id
+
   -- Get them to make their sounds (using the interface)
   sound1 <- submit alice do
     exerciseCmd animal1Id MakeSound
@@ -116,15 +120,20 @@ setup = script do
     exerciseCmd animal2Id AssignName with newName = "Gnasher"
   debug animal1Id2
 
+  -- New contracts have been created so ids have changed
+  assertNotEq animal1Id2 animal1Id
+
   -- Go back to a Cat contract Id and verify it matches the original one
   -- Note this works even though this contract has now been archived
   let cat2Id = fromInterfaceContractId @Cat animal1Id
   catId === cat2Id
 
-  -- Here is how to get the new cat contract
-  (cat3Id, cat) <- head <$> query @Cat alice
-  debug cat3Id
+  -- Here is one way to get the new cat contract
+  let cat3Id = fromInterfaceContractId @Cat animal1Id2
+  Some a <- queryContractId @Cat alice cat3Id
+  debug a
 
+  -- Query all instances of IAnimal on the ledger
   items <- queryInterface @IAnimal alice
   forA_ items
    (\(ia, Some iv) -> do
