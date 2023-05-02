@@ -3,7 +3,6 @@ module Main where
 import Daml.Script
 import DA.Assert
 import DA.Foldable
-import DA.List
 
 -- See https://discuss.daml.com/t/example-of-a-daml-interface-step-by-step/5793
 
