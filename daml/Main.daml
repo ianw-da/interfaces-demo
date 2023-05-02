@@ -1,53 +1,84 @@
 module Main where
 
 import Daml.Script
+import DA.Assert
+import DA.Foldable
+import DA.List
+
+-- See https://discuss.daml.com/t/example-of-a-daml-interface-step-by-step/5793
 
 -- Animal interface definition
-interface Animal where
-  -- Interface methods
-  operator : Party
-  sound : Text
+interface IAnimal where
+  -- Interface must define a view type. This is a special method containing the fields
+  -- that are common to all of our implementations of the interface.
+  viewtype AnimalInterfaceView
 
-  -- Interface must define a view type.
-  viewtype AnimalInterfaceViewType
+  -- Interface methods. All templates that implement this interface must provide
+  -- implementations of these methods.
+  sound : Text -- <-- In practice this may be better in the view
+  -- Note to assign a name we define a function here that is used
+  -- in the choice below.
+  assignName : Text -> IAnimal
 
-  -- Define a choice on the interface
+  -- Define a choice on the interface that solely uses the view.
+  -- Interface choices are implemented on the interface not on the templates.
   nonconsuming choice MakeSound : Text
-    controller operator this
+    controller (view this).owner
     do
+      -- Sound gets changed into sound : IAnimal -> Text
       pure $ sound this
+
+  -- Functions can be 'fed in' to the interface choice implementation.
+  choice AssignName : ContractId IAnimal
+    with newName : Text
+    controller (view this).owner
+    do
+      -- When assignName is used in a choice an extra parameter is added which has the
+      -- interface type. Here we pass in 'this'.
+      create (assignName this newName)
+
+data AnimalInterfaceView = AnimalInterfaceView with
+  owner : Party
+  description : Text
 
 -- Template definition of a Cat, which implements the Animal interface
 template Cat
   with
-    catOperator : Party
+    catowner : Party
+    name : Text
   where
-    signatory catOperator
-    
-    -- `How the Animal interface is implemented by the Cat template
-    interface instance Animal for Cat where
+    signatory catowner
+
+    -- How the IAnimal interface is implemented by the Cat template.
+    -- This block can be here or inside the interface definition.
+    interface instance IAnimal for Cat where
       -- All interface instances must implement a special view method which returns a value
       -- of the type declared by viewtype
-      view = AnimalInterfaceViewType "cat"
+      view = AnimalInterfaceView with
       -- The implementations of the Interface methods
-      operator = catOperator
-      sound = "Miaow! I am a cat belonging to " <> show catOperator
+        owner = catowner
+        description = "I am a cat"
+
+      sound = "Miaow!"
+
+      assignName petName = toInterface @IAnimal $ this with name = petName
 
 -- Template definition of a Dog, which implements the Animal interface
 template Dog
   with
-    dogOperator : Party
+    dogowner : Party
+    name : Text
   where
-    signatory dogOperator
+    signatory dogowner
     
-    interface instance Animal for Dog where
-      view = AnimalInterfaceViewType "dog"
-      operator = dogOperator
-      sound = "Woof! I am a dog belonging to " <> show dogOperator
+    interface instance IAnimal for Dog where
+      view = AnimalInterfaceView with
+        owner = dogowner
+        description = "I am a dog"
+    
+      sound = "Woof!"
 
--- Definition of the view type
-data AnimalInterfaceViewType =
-  AnimalInterfaceViewType { name : Text}
+      assignName petName = toInterface @IAnimal $ this with name = petName
 
 -- Testing script
 setup : Script ()
@@ -57,16 +88,17 @@ setup = script do
 
   -- Create a cat contract
   catId <- submit alice do
-    createCmd Cat with catOperator = alice
-  
+    createCmd Cat with catowner = alice, name = ""
+  debug catId
+
   -- Create a dog contract
   dogId <- submit alice do
-    createCmd Dog with dogOperator = alice
+    createCmd Dog with dogowner = alice, name = ""
 
   -- Get the Animal interface contract Ids for each
-  let animal1Id = toInterfaceContractId @Animal catId
-  let animal2Id = toInterfaceContractId @Animal dogId
-
+  let animal1Id = toInterfaceContractId @IAnimal catId
+  let animal2Id = toInterfaceContractId @IAnimal dogId
+  debug animal1Id
   -- Get them to make their sounds (using the interface)
   sound1 <- submit alice do
     exerciseCmd animal1Id MakeSound
@@ -77,9 +109,26 @@ setup = script do
   debug sound1
   debug sound2
 
-  -- Go back to a Cat contract Id and verify it matches the original one
-  let cat2Id = fromInterfaceContractId @Cat animal1Id
+  -- Give them names just using the interface
+  animal1Id2 <- submit alice do
+    exerciseCmd animal1Id AssignName with newName = "Fluffy"
+  animal2Id2 <- submit alice do
+    exerciseCmd animal2Id AssignName with newName = "Gnasher"
+  debug animal1Id2
 
-  assert $ catId == cat2Id
+  -- Go back to a Cat contract Id and verify it matches the original one
+  -- Note this works even though this contract has now been archived
+  let cat2Id = fromInterfaceContractId @Cat animal1Id
+  catId === cat2Id
+
+  -- Here is how to get the new cat contract
+  (cat3Id, cat) <- head <$> query @Cat alice
+  debug cat3Id
+
+  items <- queryInterface @IAnimal alice
+  forA_ items
+   (\(ia, Some iv) -> do
+     let lineItem = show iv.owner <> " " <> iv.description
+     debug lineItem)
 
   pure ()
