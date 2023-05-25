@@ -6,15 +6,29 @@ import DA.Foldable
 
 -- See https://discuss.daml.com/t/example-of-a-daml-interface-step-by-step/5793
 
+{-
+Interface functions:
+  toInterface
+  fromInterface
+  toInterfaceContractId
+  fromInterfaceContractId
+  queryInterface
+-}
+
+data ThingInterfaceView = ThingInterfaceView {}
+
+interface IThing where
+  viewtype ThingInterfaceView
+
 -- Animal interface definition
-interface IAnimal where
+interface IAnimal requires IThing where
   -- Interface must define a view type. This is a special method containing the fields
   -- that are common to all of our implementations of the interface.
   viewtype AnimalInterfaceView
 
   -- Interface methods. All templates that implement this interface must provide
   -- implementations of these methods.
-  sound : Text -- <-- In practice this may be better in the view
+  sound : Text -- <-- In practice this may be better in the view as it is a property not a method
   -- Note to assign a name we define a function here that is used
   -- in the choice below.
   assignName : Text -> IAnimal
@@ -62,6 +76,10 @@ template Cat
 
       assignName petName = toInterface @IAnimal $ this with name = petName
 
+    -- IAnimal requires IThing
+    interface instance IThing for Cat where
+      view = ThingInterfaceView {}
+
 -- Template definition of a Dog, which implements the Animal interface
 template Dog
   with
@@ -76,8 +94,13 @@ template Dog
         description = "I am a dog"
     
       sound = "Woof!"
-
+      -- Define the assignName function which is used in the interface choice. It has to return an IAnimal
+      -- toInterface converts a template value to an interface value 
       assignName petName = toInterface @IAnimal $ this with name = petName
+
+    -- IAnimal requires IThing
+    interface instance IThing for Dog where
+      view = ThingInterfaceView {}
 
 -- Testing script
 setup : Script ()
@@ -95,8 +118,22 @@ setup = script do
     createCmd Dog with dogowner = alice, name = ""
 
   -- Get the Animal interface contract Ids for each
+  -- toInterfaceContractId converts a template contract id into an interface contract id
+  -- toInterfaceContractId : ContractId Cat -> ContractId Animal
   let animal1Id = toInterfaceContractId @IAnimal catId
   let animal2Id = toInterfaceContractId @IAnimal dogId
+
+  -- Get an IAnimal interface (as opposed to a ContractId IAnimal) for the dog
+  Some dog <- queryContractId alice dogId
+  let dogAsIAnimal = toInterface @IAnimal dog
+  -- Go back the other way
+  let Some d = fromInterface @Dog dogAsIAnimal
+
+  -- Change an interface contract id into a contract id of a different interface
+  let thing1Id = coerceInterfaceContractId @IThing animal1Id
+  -- Go back the other way
+  let d = coerceInterfaceContractId @IAnimal thing1Id
+
 
   -- Although the types are different the ids are the same
   debug catId
