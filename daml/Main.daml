@@ -17,6 +17,7 @@ Interface functions:
 
 data ThingInterfaceView = ThingInterfaceView {}
 
+-- Thing interface definition
 interface IThing where
   viewtype ThingInterfaceView
 
@@ -123,14 +124,26 @@ setup = script do
   let animal1Id = toInterfaceContractId @IAnimal catId
   let animal2Id = toInterfaceContractId @IAnimal dogId
 
+  -- Following line fails as catId is a template instance not an interface instance
+  ---let animal1Id2 = coerceInterfaceContractId @IAnimal catId
+
+  let x = coerceContractId animal1Id -- x has type ContractId Any if the next line is commented
+  --Compiler uses line below to make x have type ContractId IThing
+  let y : ContractId IThing = x
+
+  let z : ContractId IThing = coerceInterfaceContractId animal1Id
+
   -- Get an IAnimal interface (as opposed to a ContractId IAnimal) for the dog
+  -- by first getting the dog contract then using toInterface
   Some dog <- queryContractId alice dogId
   let dogAsIAnimal = toInterface @IAnimal dog
+  let dogAsIThing = toInterface @IThing dogAsIAnimal
   -- Go back the other way
   let Some d = fromInterface @Dog dogAsIAnimal
 
   -- Change an interface contract id into a contract id of a different interface
   let thing1Id = coerceInterfaceContractId @IThing animal1Id
+  let thing1Id2 = toInterfaceContractId @IThing animal1Id
   -- Go back the other way
   let d = coerceInterfaceContractId @IAnimal thing1Id
 
