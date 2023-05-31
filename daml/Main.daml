@@ -6,41 +6,31 @@ import DA.Foldable
 
 -- See https://discuss.daml.com/t/example-of-a-daml-interface-step-by-step/5793
 
-{-
-Interface functions:
-  toInterface
-  fromInterface
-  toInterfaceContractId
-  fromInterfaceContractId
-  queryInterface
--}
-
-data ThingInterfaceView = ThingInterfaceView {}
-
+-- For the demo the IThing interface is empty
 -- Thing interface definition
 interface IThing where
   viewtype ThingInterfaceView
 
+data ThingInterfaceView = ThingInterfaceView {}
+
 -- Animal interface definition
 interface IAnimal requires IThing where
-  -- Interface must define a view type. This is a special method containing the fields
+  -- Interface must define a view 6type. This is a special method containing the fields
   -- that are common to all of our implementations of the interface.
   viewtype AnimalInterfaceView
 
-  -- Interface methods. All templates that implement this interface must provide
-  -- implementations of these methods.
-  sound : Text -- <-- In practice this may be better in the view as it is a property not a method
+  -- Interface method. All templates that implement this interface must provide
+  -- implementations of this method.
   -- Note to assign a name we define a function here that is used
   -- in the choice below.
   assignName : Text -> IAnimal
 
   -- Define a choice on the interface that solely uses the view.
   -- Interface choices are implemented on the interface not on the templates.
-  nonconsuming choice MakeSound : Text
+  nonconsuming choice GreetMe : Text
     controller (view this).owner
     do
-      -- Sound gets changed into sound : IAnimal -> Text
-      pure $ sound this
+      pure $ (view this).sound
 
   -- Functions can be 'fed in' to the interface choice implementation.
   choice AssignName : ContractId IAnimal
@@ -54,12 +44,13 @@ interface IAnimal requires IThing where
 data AnimalInterfaceView = AnimalInterfaceView with
   owner : Party
   description : Text
+  sound : Text
 
 -- Template definition of a Cat, which implements the Animal interface
 template Cat
   with
     catowner : Party
-    name : Text
+    catName : Text
   where
     signatory catowner
 
@@ -72,10 +63,10 @@ template Cat
       -- The implementations of the Interface methods
         owner = catowner
         description = "I am a cat"
+        sound = "Miaow!"
 
-      sound = "Miaow!"
+      assignName petName = toInterface @IAnimal $ this with catName = petName
 
-      assignName petName = toInterface @IAnimal $ this with name = petName
 
     -- IAnimal requires IThing
     interface instance IThing for Cat where
@@ -93,8 +84,8 @@ template Dog
       view = AnimalInterfaceView with
         owner = dogowner
         description = "I am a dog"
+        sound = "Woof!"
     
-      sound = "Woof!"
       -- Define the assignName function which is used in the interface choice. It has to return an IAnimal
       -- toInterface converts a template value to an interface value 
       assignName petName = toInterface @IAnimal $ this with name = petName
@@ -111,8 +102,7 @@ setup = script do
 
   -- Create a cat contract
   catId <- submit alice do
-    createCmd Cat with catowner = alice, name = ""
-  debug catId
+    createCmd Cat with catowner = alice, catName = ""
 
   -- Create a dog contract
   dogId <- submit alice do
@@ -121,72 +111,93 @@ setup = script do
   -- Get the Animal interface contract Ids for each
   -- toInterfaceContractId converts a template contract id into an interface contract id
   -- toInterfaceContractId : ContractId Cat -> ContractId Animal
-  let animal1Id = toInterfaceContractId @IAnimal catId
-  let animal2Id = toInterfaceContractId @IAnimal dogId
+  let catAsAnimalId = toInterfaceContractId @IAnimal catId
+  let dogAsAnimalId = toInterfaceContractId @IAnimal dogId
+
+  let c : ContractId IAnimal = coerceContractId catId -- don't use not documented
+
+  -- Get the animal view
+  Some catAsAnimalInterfaceView <- queryInterfaceContractId alice catAsAnimalId
+  debug $ "Description of cat using animal interface view: " <> catAsAnimalInterfaceView.description
 
   -- Following line fails as catId is a template instance not an interface instance
   ---let animal1Id2 = coerceInterfaceContractId @IAnimal catId
 
-  let x = coerceContractId animal1Id -- x has type ContractId Any if the next line is commented
-  --Compiler uses line below to make x have type ContractId IThing
-  let y : ContractId IThing = x
+  -- Get the cat id as an IThing id in two possible ways
+  let catAsThingId : ContractId IThing = coerceInterfaceContractId catAsAnimalId
+  let catAsThingId2 = toInterfaceContractId @IThing catAsAnimalId
 
-  let z : ContractId IThing = coerceInterfaceContractId animal1Id
+  -- check
+  catAsThingId === catAsThingId2
+
+  -- Go back the other way
+  let catAsAnimalId2 = fromInterfaceContractId @IAnimal catAsThingId
+  -- Or can to this using coerceInterfaceContractId
+  let catAsAnimalId3 : ContractId IAnimal = coerceInterfaceContractId catAsThingId2
+  -- Go back to the cat id
+  let catId2 = fromInterfaceContractId @Cat catAsAnimalId2
+  -- Can also go directly from IThing id to Cat id
+  let catId3 = fromInterfaceContractId @Cat catAsThingId
+
+  -- check
+  catId === catId2
+  catId === catId3
+  catAsAnimalId === catAsAnimalId2
+  catAsAnimalId === catAsAnimalId3
 
   -- Get an IAnimal interface (as opposed to a ContractId IAnimal) for the dog
   -- by first getting the dog contract then using toInterface
   Some dog <- queryContractId alice dogId
+  
   let dogAsIAnimal = toInterface @IAnimal dog
   let dogAsIThing = toInterface @IThing dogAsIAnimal
+  
   -- Go back the other way
-  let Some d = fromInterface @Dog dogAsIAnimal
+  let Some dogAsIAnimal2 = fromInterface @IAnimal dogAsIThing
+  let Some dog2 = fromInterface @Dog dogAsIAnimal
+  -- Or go from thing to dog directly
+  let Some dog3 = fromInterface @Dog dogAsIThing
 
-  -- Change an interface contract id into a contract id of a different interface
-  let thing1Id = coerceInterfaceContractId @IThing animal1Id
-  let thing1Id2 = toInterfaceContractId @IThing animal1Id
-  -- Go back the other way
-  let d = coerceInterfaceContractId @IAnimal thing1Id
-
+  -- check
+  dog === dog2
+  dog === dog3
 
   -- Although the types are different the ids are the same
-  debug catId
-  debug animal1Id
+  show catId === show catAsAnimalId
 
-  -- Get them to make their sounds (using the interface)
+  -- Get them to make their sounds (using the IAnimal interface)
   sound1 <- submit alice do
-    exerciseCmd animal1Id MakeSound
+    exerciseCmd catAsAnimalId GreetMe
 
   sound2 <- submit alice do
-    exerciseCmd animal2Id MakeSound
+    exerciseCmd dogAsAnimalId GreetMe
 
   debug sound1
   debug sound2
 
-  -- Give them names just using the interface
-  animal1Id2 <- submit alice do
-    exerciseCmd animal1Id AssignName with newName = "Fluffy"
-  animal2Id2 <- submit alice do
-    exerciseCmd animal2Id AssignName with newName = "Gnasher"
-  debug animal1Id2
+  -- Give them names using the IAnimal interface
+  catAsAnimalId4 <- submit alice do
+    exerciseCmd catAsAnimalId AssignName with newName = "Fluffy"
+  dogAsAnimalId4 <- submit alice do
+    exerciseCmd dogAsAnimalId AssignName with newName = "Gnasher"
 
   -- New contracts have been created so ids have changed
-  assertNotEq animal1Id2 animal1Id
+  assertNotEq catAsAnimalId4 catAsAnimalId
 
   -- Go back to a Cat contract Id and verify it matches the original one
   -- Note this works even though this contract has now been archived
-  let cat2Id = fromInterfaceContractId @Cat animal1Id
-  catId === cat2Id
+  let catId4 = fromInterfaceContractId @Cat catAsAnimalId
+  catId === catId4
 
   -- Here is one way to get the new cat contract
-  let cat3Id = fromInterfaceContractId @Cat animal1Id2
-  Some a <- queryContractId @Cat alice cat3Id
-  debug a
+  Some cat2 <- queryContractId alice $ fromInterfaceContractId @Cat catAsAnimalId4
+  debug $ "Cat with name assigned: " <> show cat2
 
   -- Query all instances of IAnimal on the ledger
   items <- queryInterface @IAnimal alice
   forA_ items
    (\(ia, Some iv) -> do
-     let lineItem = show iv.owner <> " " <> iv.description
+     let lineItem = "My owner is " <> show iv.owner <> ". " <> iv.description
      debug lineItem)
 
   pure ()
